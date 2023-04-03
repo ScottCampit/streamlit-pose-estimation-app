@@ -21,7 +21,7 @@ import matplotlib.patches as patches
 @st.cache(allow_output_mutation=True)
 def load_model():
     """Loads the model from the model directory."""
-    model_path = "/mnt/c/Users/owner/Software/couro-models/base/lite-model_movenet_singlepose_thunder_3.tflite"
+    model_path = "./lite-model_movenet_singlepose_thunder_3.tflite"
     interpreter = tf.lite.Interpreter(model_path=model_path)
     interpreter.allocate_tensors()
     return interpreter
@@ -232,7 +232,7 @@ if __name__ == "__main__":
         accept_multiple_files=True)
     
     if uploaded_files is None:
-        image_path = "/mnt/c/Users/owner/Software/couro-models/data/A2D/RunClips/_aJOs5B9T-Q/00141.png"
+        image_path = "./test/images/test.png"
         image = tf.io.read_file(image_path)
         image = tf.image.decode_jpeg(image, channels=3)
         x = process_image(image)
@@ -248,8 +248,6 @@ if __name__ == "__main__":
         model = load_model()
         keypoints = predict(model, x)
         output_overlay = visualize_keypoints(image, keypoints)
-        print(output_overlay)
-        print(type(output_overlay))
         
         st.image(output_overlay)
     
