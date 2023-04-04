@@ -1,0 +1,7 @@
+freeglut3-dev
+libgtk2.0-dev
+python3-opencv
+libopencv-dev
+ffmpeg
+libsm6
+libxext6
