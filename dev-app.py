@@ -5,6 +5,7 @@ Predicts the pose of a single image using the MoveNet model.
 """
 
 import os
+from datetime import datetime
 
 import cv2
 #import supervisely_lib as sly
@@ -189,67 +190,76 @@ def draw_prediction_on_image(
   return image_from_plot
 
 def load_local_test_image():
-    """Load a local test image"""
-    image_path = "/mnt/c/Users/owner/Software/couro-models/data/A2D/RunClips/_aJOs5B9T-Q/00141.png"
-    image = tf.io.read_file(image_path)
-    image = tf.image.decode_jpeg(image, channels=3)
+  """Load a local test image"""
+  image_path = "/mnt/c/Users/owner/Software/couro-models/data/A2D/RunClips/_aJOs5B9T-Q/00141.png"
+  image = tf.io.read_file(image_path)
+  image = tf.image.decode_jpeg(image, channels=3)
+  return image
 
-    x = tf.expand_dims(image, axis=0)
-    x = tf.image.resize_with_pad(x, 256, 256)
-    x = tf.cast(x, dtype=tf.float32)
-    return x
+def resize_image(image, dim_size=256):
+  """Resize the image to 256x256."""
+  x = tf.expand_dims(image, axis=0)
+  x = tf.image.resize_with_pad(x, dim_size, dim_size)
+  x = tf.cast(x, dtype=tf.float32)
+  return x
 
 def load_remote_test_image():
-    pass
+  pass
 
 def load_movenet_model(model_path:str="/mnt/c/Users/owner/Software/couro-models/base/lite-model_movenet_singlepose_thunder_3.tflite"):
-    """Loads the model from the model directory."""
-    interpreter = tf.lite.Interpreter(model_path=model_path)
-    interpreter.allocate_tensors()
-    return interpreter
+  """Loads the model from the model directory."""
+  interpreter = tf.lite.Interpreter(model_path=model_path)
+  interpreter.allocate_tensors()
+  return interpreter
 
 def load_blazepose_model(model_path:str="/mnt/c/Users/owner/Software/couro-models/base/blazepose_heatmap_v1.1.onnx"):
-    """Loads the model from the model directory."""
-    model = onnx.load(model_path)
-    onnx.checker.check_model(model)
-    return model
+  """Loads the model from the model directory."""
+  model = onnx.load(model_path)
+  onnx.checker.check_model(model)
+  return model
 
-def blazepose_inference(model_path:str="/mnt/c/Users/owner/Software/couro-models/base/blazepose_heatmap_v1.1.onnx", x):
-   """"""
-   session = ort.InferenceSession(model_path)
-   output = session.run(None, {'input': x.numpy()})
-   return output
+def blazepose_inference(x, model_path:str="/mnt/c/Users/owner/Software/couro-models/base/blazepose_heatmap_v1.1.onnx"):
+  """"""
+  session = ort.InferenceSession(model_path)
+  output = session.run(None, {'input': x.numpy()})
+  return output
 
-def predict(interpreter, x):
-    """Runs the model on the input image and returns the keypoints."""
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
-    interpreter.set_tensor(input_details[0]['index'], x.numpy())
-    interpreter.invoke()
-    keypoints = interpreter.get_tensor(output_details[0]['index'])
-    return keypoints
+def movenet_predict(interpreter, x):
+  """Runs the model on the input image and returns the keypoints."""
+  input_details = interpreter.get_input_details()
+  output_details = interpreter.get_output_details()
+  interpreter.set_tensor(input_details[0]['index'], x.numpy())
+  interpreter.invoke()
+  keypoints = interpreter.get_tensor(output_details[0]['index'])
+  return keypoints
 
-def visualize_keypoints(image, keypoints):
-    """Visualizes the keypoints on the image."""
-    display_image = tf.expand_dims(image, axis=0)
-    display_image = tf.cast(tf.image.resize_with_pad(
-        display_image, 256, 256), dtype=tf.int32)
-    output_overlay = draw_prediction_on_image(np.squeeze(display_image.numpy(), axis=0), keypoints)
-    plt.figure(figsize=(5, 5))
-    plt.imshow(output_overlay)
-    plt.savefig("test.png")
-    _ = plt.axis('off')
+def visualize_keypoints(image, keypoints, dim_size=256):
+  """Visualizes the keypoints on the image."""
+  display_image = tf.expand_dims(image, axis=0)
+  display_image = tf.cast(tf.image.resize_with_pad(
+      display_image, dim_size, dim_size), dtype=tf.int32)
+  output_overlay = draw_prediction_on_image(np.squeeze(display_image.numpy(), axis=0), keypoints)
+  plt.figure(figsize=(5, 5))
+  plt.imshow(output_overlay)
+  plt.savefig(os.path.join('./test/images/', datetime.now().strftime('%Y%m-%d%H-%M%S')))
+  _ = plt.axis('off')
+
+def visualize_movenet_models(model_list:list, input_sizes:list):
+  """"""
+  base = "/mnt/c/Users/owner/Software/couro-models/base/"
+  for idx, model_path in enumerate(model_list):
+    dim_size = input_sizes[idx]
+    image = load_local_test_image()
+    x = resize_image(image, dim_size=dim_size)
+    image = tf.image.resize_with_pad(image, dim_size, dim_size)
+    
+    model = load_movenet_model(os.path.join(base, model_path))
+    keypoints = movenet_predict(model, x)
+    visualize_keypoints(image, keypoints)
 
 if __name__ == "__main__":
-    
-    image_path = "/mnt/c/Users/owner/Software/couro-models/data/A2D/RunClips/_aJOs5B9T-Q/00141.png"
-    image = tf.io.read_file(image_path)
-    image = tf.image.decode_jpeg(image, channels=3)
+  models = ["lite-model_movenet_singlepose_lightning_3.tflite", "lite-model_movenet_singlepose_thunder_3.tflite"]
+  input_sizes = [192, 256]
+  visualize_movenet_models(models, input_sizes)
 
-    x = load_local_test_image()
-    base = "/mnt/c/Users/owner/Software/couro-models/base/"
-    models = ["lite-model_movenet_singlepose_lightning_3.tflite", "lite-model_movenet_singlepose_thunder_3.tflite"]
-    for m in models:
-      model = load_movenet_model(os.path.join(base, m))
-      keypoints = predict(model, x)
-      visualize_keypoints(image, keypoints)
+  #model = load_blazepose_model()
