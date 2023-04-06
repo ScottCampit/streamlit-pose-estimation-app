@@ -18,7 +18,7 @@ from matplotlib import pyplot as plt
 from matplotlib.collections import LineCollection
 import matplotlib.patches as patches
 
-@st.cache(allow_output_mutation=True)
+@st.cache_resource()
 def load_model():
     """Loads the model from the model directory."""
     model_path = "./lite-model_movenet_singlepose_thunder_3.tflite"
@@ -35,10 +35,10 @@ def predict(interpreter, x):
     keypoints = interpreter.get_tensor(output_details[0]['index'])
     return keypoints
 
-@st.cache(allow_output_mutation=True)
-def process_image(image):
+#@st.cache_data()
+def process_image(_image):
     """Process image for prediction."""
-    x = tf.expand_dims(image, axis=0)
+    x = tf.expand_dims(_image, axis=0)
     x = tf.image.resize_with_pad(x, 256, 256)
     x = tf.cast(x, dtype=tf.float32)
     return x
@@ -221,38 +221,120 @@ def visualize_keypoints(image, keypoints):
     output_overlay = draw_prediction_on_image(np.squeeze(display_image.numpy(), axis=0), keypoints)
     return output_overlay
 
-if __name__ == "__main__":
+def calculate_angle(proximal:float, medial:float, distal:float):
+  """Calculate the angle given 3 keypoints (proxima, medial, and distal)."""
+  radians = np.arctan2(distal[1]-medial[1], distal[0]-medial[0]) - np.arctan2(proximal[1]-medial[1], proximal[0]-medial[0])
+  angle = np.abs((radians * 180.0) / np.pi)
+  
+  if angle > 180.0:
+      angle = 360 - angle
+      
+  return angle
 
-    st.title("Couro Pose Estimation Demo")
-    st.write("This is a demo of the Couro Pose Estimation model. Currently, the foundation model in-use is the MoveNet model (from Tensorflow team @ Google).")
+def return_2D_joint_coord(keypoints:np.ndarray):
+  """Returns the joint angles using key points from MoveNet model."""
+
+  keypoints = np.squeeze(keypoints)
+
+  left_elbow   = [keypoints[KEYPOINT_DICT['left_elbow'], :][0],      
+                    keypoints[KEYPOINT_DICT['left_elbow'], :][1]]
+  left_shoulder = [keypoints[KEYPOINT_DICT['left_shoulder'], :][0],
+                    keypoints[KEYPOINT_DICT['left_shoulder'], :][1]]
+  left_hip      = [keypoints[KEYPOINT_DICT['left_hip'], :][0],
+                    keypoints[KEYPOINT_DICT['left_hip'], :][1]]
+  left_knee     = [keypoints[KEYPOINT_DICT['left_knee'], :][0],
+                    keypoints[KEYPOINT_DICT['left_knee'], :][1]]
+  left_ankle    = [keypoints[KEYPOINT_DICT['left_ankle'], :][0],
+                    keypoints[KEYPOINT_DICT['left_ankle'], :][1]]
+
+  right_elbow   = [keypoints[KEYPOINT_DICT['right_elbow'], :][0],
+                    keypoints[KEYPOINT_DICT['right_elbow'], :][1]]
+  right_shoulder = [keypoints[KEYPOINT_DICT['right_shoulder'], :][0],
+                    keypoints[KEYPOINT_DICT['right_shoulder'], :][1]]
+  right_hip      = [keypoints[KEYPOINT_DICT['right_hip'], :][0],
+                    keypoints[KEYPOINT_DICT['right_hip'], :][1]]
+  right_knee     = [keypoints[KEYPOINT_DICT['right_knee'], :][0],
+                    keypoints[KEYPOINT_DICT['right_knee'], :][1]]
+  right_ankle    = [keypoints[KEYPOINT_DICT['right_ankle'], :][0],
+                    keypoints[KEYPOINT_DICT['right_ankle'], :][1]]
+
+  left = (left_shoulder, left_elbow, left_hip, left_knee, left_ankle)
+  right = (right_shoulder, right_elbow, right_hip, right_knee, right_ankle)
+  return left, right
+
+def calculate_2D_joint_angles(keypoints:np.ndarray):
+  """Calculates the 2D joint angles of the pose landmarks."""
+  left, right = return_2D_joint_coord(keypoints)
+  left_shoulder, left_elbow, left_hip, left_knee, left_ankle = left
+  right_shoulder, right_elbow, right_hip, right_knee, right_ankle = right
+
+  right_angle_shoulder = calculate_angle(right_elbow, right_shoulder, right_hip)
+  right_angle_knee = calculate_angle(right_hip, right_knee, right_ankle)
+  right_angle_hip = calculate_angle(right_shoulder, right_hip, right_knee)
+
+  left_angle_shoulder = calculate_angle(left_elbow, left_shoulder, left_hip)
+  left_angle_knee = calculate_angle(left_hip, left_knee, left_ankle)
+  left_angle_hip = calculate_angle(left_shoulder, left_hip, left_knee)
+
+  left_angle = (left_angle_shoulder, left_angle_knee, left_angle_hip)
+  right_angle = (right_angle_shoulder, right_angle_knee, right_angle_hip)
+  return left_angle, right_angle
+
+if __name__ == "__main__":
+    st.set_page_config(layout="wide", 
+                       page_title="Couro Pose Estimator")
+    
+    hide_default_format = """
+          <style>
+          #MainMenu {visibility: hidden; }
+          footer {visibility: hidden;}
+          </style>
+          """
+    st.markdown(hide_default_format, unsafe_allow_html=True)
+    st.title("Couro Pose Estimator")
+    st.write("This is a demo of the Couro Pose Estimation model. It is a 2D pose estimation model that can be used to detect the pose of a person in an image. The model is trained on the COCO dataset and can detect 17 keypoints.")
+
+    left_joints = ['Left Shoulder', 'Left Hip', 'Left Knee']
+    right_joints = ['Right Shoulder', 'Right Hip', 'Right Knee']
+
+    dim_size = 256
 
     uploaded_files = st.file_uploader(
-        label="Choose an image to annotate", 
-        type=["jpg", "png"], 
-        accept_multiple_files=True)
+          label="Choose an image to annotate", 
+          type=["jpg", "png"], 
+          accept_multiple_files=False)
     
-    if uploaded_files is None:
-        image_path = "./test/images/test.png"
-        image = tf.io.read_file(image_path)
-        image = tf.image.decode_jpeg(image, channels=3)
+    col1, col2 = st.columns(2)
+    with col1:
+      if uploaded_files is not None:
+        image = Image.open(uploaded_files)
         x = process_image(image)
+        image = tf.image.resize_with_pad(image, dim_size, dim_size)
+        tmp = tf.keras.utils.array_to_img(image)
+        st.image(tmp, use_column_width=True)
 
-    elif uploaded_files is not None:
-        for uploaded_file in uploaded_files:
-            image = Image.open(uploaded_file)
-            st.image(image, 
-                     caption="Uploaded Image", use_column_width=True)
-            x = process_image(image)
 
     if st.button("Annotate"):
-        model = load_model()
-        keypoints = predict(model, x)
-        output_overlay = visualize_keypoints(image, keypoints)
-        
+      model = load_model()
+      keypoints = predict(model, x)
+      output_overlay = visualize_keypoints(image, keypoints)
+      left_angles, right_angles = calculate_2D_joint_angles(keypoints)
+
+      with col2:
         st.image(output_overlay)
-    
-    #st.footer("""
-    #    Developed and maintained by Scott Campit, Ph.D.
-    #    [Couro.io](https://www.couro.io)
-    #    Copyright (c) 2023 Couro
-    #    """)
+        left_joint_str = ""
+        right_joint_str = ""
+        for i in range(len(left_joints)):
+          left_joint_str += f"{left_joints[i]}: {round(left_angles[i], 2)}" + '\n'
+          right_joint_str += f"{right_joints[i]}: {round(right_angles[i], 2)}" + '\n'
+      
+      st.subheader("Predicted joint angles:")
+      col1x, col2x, _ = st.columns(3)
+      with col1x:
+        st.text_area("Left joint angles: ", 
+                  value=left_joint_str, 
+                  height=100, max_chars=None, key=None)
+      with col2x:
+        st.text_area("Right joint angles: ", 
+                  value=right_joint_str, 
+                  height=100, max_chars=None, key=None)

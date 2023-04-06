@@ -255,11 +255,113 @@ def visualize_movenet_models(model_list:list, input_sizes:list):
     
     model = load_movenet_model(os.path.join(base, model_path))
     keypoints = movenet_predict(model, x)
-    visualize_keypoints(image, keypoints)
+    #visualize_keypoints(image, keypoints)
+
+def calculate_angle(proximal:float, medial:float, distal:float):
+  """Calculate the angle given 3 keypoints (proxima, medial, and distal)."""
+  radians = np.arctan2(distal[1]-medial[1], distal[0]-medial[0]) - np.arctan2(proximal[1]-medial[1], proximal[0]-medial[0])
+  angle = np.abs((radians * 180.0) / np.pi)
+  
+  if angle > 180.0:
+      angle = 360 - angle
+      
+  return angle
+
+def return_2D_joint_coord(keypoints:np.ndarray):
+  """Returns the joint angles using key points from MoveNet model."""
+
+  keypoints = np.squeeze(keypoints)
+
+  left_elbow   = [keypoints[KEYPOINT_DICT['left_elbow'], :][0],      
+                    keypoints[KEYPOINT_DICT['left_elbow'], :][1]]
+  left_shoulder = [keypoints[KEYPOINT_DICT['left_shoulder'], :][0],
+                    keypoints[KEYPOINT_DICT['left_shoulder'], :][1]]
+  left_hip      = [keypoints[KEYPOINT_DICT['left_hip'], :][0],
+                    keypoints[KEYPOINT_DICT['left_hip'], :][1]]
+  left_knee     = [keypoints[KEYPOINT_DICT['left_knee'], :][0],
+                    keypoints[KEYPOINT_DICT['left_knee'], :][1]]
+  left_ankle    = [keypoints[KEYPOINT_DICT['left_ankle'], :][0],
+                    keypoints[KEYPOINT_DICT['left_ankle'], :][1]]
+
+  right_elbow   = [keypoints[KEYPOINT_DICT['right_elbow'], :][0],
+                    keypoints[KEYPOINT_DICT['right_elbow'], :][1]]
+  right_shoulder = [keypoints[KEYPOINT_DICT['right_shoulder'], :][0],
+                    keypoints[KEYPOINT_DICT['right_shoulder'], :][1]]
+  right_hip      = [keypoints[KEYPOINT_DICT['right_hip'], :][0],
+                    keypoints[KEYPOINT_DICT['right_hip'], :][1]]
+  right_knee     = [keypoints[KEYPOINT_DICT['right_knee'], :][0],
+                    keypoints[KEYPOINT_DICT['right_knee'], :][1]]
+  right_ankle    = [keypoints[KEYPOINT_DICT['right_ankle'], :][0],
+                    keypoints[KEYPOINT_DICT['right_ankle'], :][1]]
+
+  left = (left_shoulder, left_elbow, left_hip, left_knee, left_ankle)
+  right = (right_shoulder, right_elbow, right_hip, right_knee, right_ankle)
+  return left, right
+
+def calculate_2D_joint_angles(keypoints:np.ndarray):
+  """Calculates the 2D joint angles of the pose landmarks."""
+  left, right = return_2D_joint_coord(keypoints)
+  left_shoulder, left_elbow, left_hip, left_knee, left_ankle = left
+  right_shoulder, right_elbow, right_hip, right_knee, right_ankle = right
+
+  right_angle_shoulder = calculate_angle(right_elbow, right_shoulder, right_hip)
+  right_angle_knee = calculate_angle(right_hip, right_knee, right_ankle)
+  right_angle_hip = calculate_angle(right_shoulder, right_hip, right_knee)
+
+  left_angle_shoulder = calculate_angle(left_elbow, left_shoulder, left_hip)
+  left_angle_knee = calculate_angle(left_hip, left_knee, left_ankle)
+  left_angle_hip = calculate_angle(left_shoulder, left_hip, left_knee)
+
+  left_angle = (left_angle_shoulder, left_angle_knee, left_angle_hip)
+  right_angle = (right_angle_shoulder, right_angle_knee, right_angle_hip)
+  return left_angle, right_angle
+
+def movenet_video_inference(mp4_path:str):
+  """Inference on a video file."""
+  cap = cv2.VideoCapture(mp4_path)
+  model = load_movenet_model()
+  while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+      print("Can't receive frame (stream end?). Exiting ...")
+      break
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    frame = tf.expand_dims(frame, axis=0)
+    frame = tf.cast(tf.image.resize_with_pad(
+        frame, 256, 256), dtype=tf.int32)
+    frame = tf.cast(frame, dtype=tf.float32)
+    frame = frame / 255.0
+    keypoints = movenet_predict(model, frame)
+    left_angle, right_angle = calculate_2D_joint_angles(keypoints)
+    print(left_angle, right_angle)
+    output_overlay = draw_prediction_on_image(np.squeeze(frame.numpy(), axis=0), keypoints)
+    cv2.imshow('frame', output_overlay)
+    if cv2.waitKey(1) == ord('q'):
+      break
+  cap.release()
+  cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-  models = ["lite-model_movenet_singlepose_lightning_3.tflite", "lite-model_movenet_singlepose_thunder_3.tflite"]
-  input_sizes = [192, 256]
-  visualize_movenet_models(models, input_sizes)
 
+  # Joint analysis on a static image with Thunder MoveNet model
+  #model = load_movenet_model()
+  #image = load_local_test_image()
+  #x = resize_image(image)
+  #image = tf.image.resize_with_pad(image, 256, 256)
+
+  #keypoints = movenet_predict(model, x)
+  #left_angle, right_angle = calculate_2D_joint_angles(keypoints)
+  #print(left_angle, right_angle)
+
+  #print(keypoints[KEYPOINT_DICT['left_elbow']])
+  # Static images on different MoveNet models
+  #models = ["lite-model_movenet_singlepose_lightning_3.tflite", "lite-model_movenet_singlepose_thunder_3.tflite"]
+  #input_sizes = [192, 256]
+  #visualize_movenet_models(models, input_sizes)
+
+  # BlazePose model
   #model = load_blazepose_model()
+
+  # Inference on a video file
+  mp4_path = "/mnt/c/Users/owner/Software/couro-models/data/A2D/Run/_aJOs5B9T-Q.mp4"
+  movenet_video_inference(mp4_path)
