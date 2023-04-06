@@ -11,6 +11,8 @@ import cv2
 import numpy as np
 
 import tensorflow as tf
+import onnx
+import onnxruntime as ort
 
 from matplotlib import pyplot as plt
 from matplotlib.collections import LineCollection
@@ -206,6 +208,17 @@ def load_movenet_model(model_path:str="/mnt/c/Users/owner/Software/couro-models/
     interpreter.allocate_tensors()
     return interpreter
 
+def load_blazepose_model(model_path:str="/mnt/c/Users/owner/Software/couro-models/base/blazepose_heatmap_v1.1.onnx"):
+    """Loads the model from the model directory."""
+    model = onnx.load(model_path)
+    onnx.checker.check_model(model)
+    return model
+
+def blazepose_inference(model_path:str="/mnt/c/Users/owner/Software/couro-models/base/blazepose_heatmap_v1.1.onnx", x):
+   """"""
+   session = ort.InferenceSession(model_path)
+   output = session.run(None, {'input': x.numpy()})
+   return output
 
 def predict(interpreter, x):
     """Runs the model on the input image and returns the keypoints."""
@@ -234,8 +247,9 @@ if __name__ == "__main__":
     image = tf.image.decode_jpeg(image, channels=3)
 
     x = load_local_test_image()
+    base = "/mnt/c/Users/owner/Software/couro-models/base/"
     models = ["lite-model_movenet_singlepose_lightning_3.tflite", "lite-model_movenet_singlepose_thunder_3.tflite"]
     for m in models:
-      model = load_movenet_model(m)
+      model = load_movenet_model(os.path.join(base, m))
       keypoints = predict(model, x)
       visualize_keypoints(image, keypoints)
