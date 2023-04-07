@@ -13,6 +13,7 @@ import numpy as np
 import streamlit as st
 from PIL import Image
 import cv2
+import mime
 
 from matplotlib import pyplot as plt
 from matplotlib.collections import LineCollection
@@ -231,6 +232,34 @@ def calculate_angle(proximal:float, medial:float, distal:float):
       
   return angle
 
+def movenet_video_inference(mp4_path:str, num_of_frames_you_want:int=20):
+  """Inference on a video file."""
+  cap = cv2.VideoCapture(mp4_path)
+
+  total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+  step_size = total_frames // num_of_frames_you_want
+  frame_count = 0
+
+  while True:
+    ret, frame = cap.read()
+    if ret:
+      if frame_count % step_size == 0:
+        x = process_image(frame)
+        image = tf.image.resize_with_pad(frame, dim_size, dim_size)
+
+        keypoints = predict(model, x)
+        visualize_keypoints(image, keypoints)
+      frame_count += 1
+    else:
+      break
+
+    # Display the frame
+    cv2.imshow('Video', frame)
+    cv2.waitKey(1)
+  
+  cap.release()
+  cv2.destroyAllWindows()
+
 def return_2D_joint_coord(keypoints:np.ndarray):
   """Returns the joint angles using key points from MoveNet model."""
 
@@ -298,43 +327,72 @@ if __name__ == "__main__":
     right_joints = ['Right Shoulder', 'Right Hip', 'Right Knee']
 
     dim_size = 256
+    model = load_model()
 
     uploaded_files = st.file_uploader(
-          label="Choose an image to annotate", 
-          type=["jpg", "png"], 
-          accept_multiple_files=False)
+          label="Choose an image or video to annotate", 
+          type=["jpg", "png", "mp4"], 
+          accept_multiple_files=True)
     
     col1, col2 = st.columns(2)
-    with col1:
-      if uploaded_files is not None:
-        image = Image.open(uploaded_files)
-        x = process_image(image)
-        image = tf.image.resize_with_pad(image, dim_size, dim_size)
-        tmp = tf.keras.utils.array_to_img(image)
-        st.image(tmp, use_column_width=True)
+    if uploaded_files is not None:
+      if uploaded_files[0].name.split('.')[-1] == 'png':
+        with col1:
+          for file in uploaded_files:
+            image = Image.open(file)
+            x = process_image(image)
+            image = tf.image.resize_with_pad(image, dim_size, dim_size)
+            tmp = tf.keras.utils.array_to_img(image)
+            st.image(tmp, use_column_width=True)
 
+            if st.button("Annotate"):
+              with col2:
+                keypoints = predict(model, x)
+                output_overlay = visualize_keypoints(image, keypoints)
+                left_angles, right_angles = calculate_2D_joint_angles(keypoints)
 
-    if st.button("Annotate"):
-      model = load_model()
-      keypoints = predict(model, x)
-      output_overlay = visualize_keypoints(image, keypoints)
-      left_angles, right_angles = calculate_2D_joint_angles(keypoints)
+                st.image(output_overlay)
+                left_joint_str = ""
+                right_joint_str = ""
+                for i in range(len(left_joints)):
+                  left_joint_str += f"{left_joints[i]}: {round(left_angles[i], 2)}" + '\n'
+                  right_joint_str += f"{right_joints[i]}: {round(right_angles[i], 2)}" + '\n'
+              
+                st.subheader("Predicted joint angles:")
+                col1x, col2x, _ = st.columns(3)
 
-      with col2:
-        st.image(output_overlay)
-        left_joint_str = ""
-        right_joint_str = ""
-        for i in range(len(left_joints)):
-          left_joint_str += f"{left_joints[i]}: {round(left_angles[i], 2)}" + '\n'
-          right_joint_str += f"{right_joints[i]}: {round(right_angles[i], 2)}" + '\n'
-      
-      st.subheader("Predicted joint angles:")
-      col1x, col2x, _ = st.columns(3)
-      with col1x:
-        st.text_area("Left joint angles: ", 
-                  value=left_joint_str, 
-                  height=100, max_chars=None, key=None)
-      with col2x:
-        st.text_area("Right joint angles: ", 
-                  value=right_joint_str, 
-                  height=100, max_chars=None, key=None)
+                with col1x:
+                  st.text_area("Left joint angles: ", 
+                            value=left_joint_str, 
+                            height=100, max_chars=None, key=None)
+                  
+                with col2x:
+                  st.text_area("Right joint angles: ", 
+                            value=right_joint_str, 
+                            height=100, max_chars=None, key=None)
+
+      elif uploaded_files[0].name.split('.')[-1] == 'mp4':
+        for file in uploaded_files:
+          video_bytes = file.read()
+          st.video(data=file)
+          cap = cv2.VideoCapture(video_bytes)
+
+          total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+          step_size = total_frames // 20
+          frame_count = 0
+
+          if st.button("Annotate"):
+            while True:
+              ret, frame = cap.read()
+              if ret:
+                if frame_count % step_size == 0:
+                  x = process_image(frame)
+                  image = tf.image.resize_with_pad(frame, dim_size, dim_size)
+
+                  keypoints = predict(model, x)
+                  visualize_keypoints(image, keypoints)
+                frame_count += 1
+              else:
+                break
+    else:
+      pass
