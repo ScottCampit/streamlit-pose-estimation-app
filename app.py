@@ -7,17 +7,19 @@ Create MVP development application using Streamlit.
 import sys
 import os
 import io
+import tempfile
 
 import tensorflow as tf
 import numpy as np
-import streamlit as st
 from PIL import Image
 import cv2
-import mime
 
 from matplotlib import pyplot as plt
 from matplotlib.collections import LineCollection
 import matplotlib.patches as patches
+
+import streamlit as st
+from streamlit_image_select import image_select
 
 @st.cache_resource()
 def load_model():
@@ -36,7 +38,6 @@ def predict(interpreter, x):
     keypoints = interpreter.get_tensor(output_details[0]['index'])
     return keypoints
 
-#@st.cache_data()
 def process_image(_image):
     """Process image for prediction."""
     x = tf.expand_dims(_image, axis=0)
@@ -44,6 +45,43 @@ def process_image(_image):
     x = tf.cast(x, dtype=tf.float32)
     return x
 
+def get_angles(_keypoints):
+  """"""
+  # Store joint angles
+  left_angles, right_angles = calculate_2D_joint_angles(_keypoints)
+  left_joint_str = ""
+  right_joint_str = ""
+
+  for i in range(len(left_joints)):
+    left_joint_str += f"{left_joints[i]}: {round(left_angles[i], 2)}" + '\n'
+    right_joint_str += f"{right_joints[i]}: {round(right_angles[i], 2)}" + '\n'
+  st.session_state['all_left_joint_annot'].append(left_joint_str)
+  st.session_state['all_right_joint_annot'].append(right_joint_str)
+
+@st.cache_data(experimental_allow_widgets=True)
+def get_frames(_video):
+  """"""
+  cap = cv2.VideoCapture(_video)
+
+  total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+  step_size = total_frames // 20
+  frame_count = 0
+
+  for i in range(0, total_frames, step_size):
+    cap.set(cv2.CAP_PROP_POS_FRAMES, i)
+    ret, frame = cap.read()
+    if not ret:
+      break
+
+    # Process frame
+    x = process_image(frame)
+    image = tf.image.resize_with_pad(frame, dim_size, dim_size)
+    keypoints = predict(model, x)
+    annotated_img = visualize_keypoints(image, keypoints)
+    get_angles(keypoints)
+    st.session_state['frame_count'].append(frame_count)
+    st.session_state['annotated_img'].append(annotated_img)
+  
 # Dictionary that maps from joint names to keypoint indices.
 KEYPOINT_DICT = {
     'nose': 0,
@@ -329,6 +367,18 @@ if __name__ == "__main__":
     dim_size = 256
     model = load_model()
 
+    if 'annotated_img' not in st.session_state:
+      st.session_state['annotated_img'] = list()
+    
+    if 'all_left_joint_annot' not in st.session_state:
+      st.session_state['all_left_joint_annot'] = list()
+
+    if 'all_right_joint_annot' not in st.session_state:
+      st.session_state['all_right_joint_annot'] = list()
+
+    if 'frame_count' not in st.session_state:
+      st.session_state['frame_count'] = list()
+
     uploaded_files = st.file_uploader(
           label="Choose an image or video to annotate", 
           type=["jpg", "png", "mp4"], 
@@ -336,63 +386,75 @@ if __name__ == "__main__":
     
     col1, col2 = st.columns(2)
     if uploaded_files is not None:
-      if uploaded_files[0].name.split('.')[-1] == 'png':
-        with col1:
-          for file in uploaded_files:
-            image = Image.open(file)
-            x = process_image(image)
-            image = tf.image.resize_with_pad(image, dim_size, dim_size)
-            tmp = tf.keras.utils.array_to_img(image)
-            st.image(tmp, use_column_width=True)
+      try:
+        if uploaded_files[0].name.split('.')[-1] == 'png':
+          with col1:
+            for file in uploaded_files:
+              image = Image.open(file)
+              x = process_image(image)
+              image = tf.image.resize_with_pad(image, dim_size, dim_size)
+              tmp = tf.keras.utils.array_to_img(image)
+              st.image(tmp, use_column_width=True)
 
-            if st.button("Annotate"):
-              with col2:
-                keypoints = predict(model, x)
-                output_overlay = visualize_keypoints(image, keypoints)
-                left_angles, right_angles = calculate_2D_joint_angles(keypoints)
-
-                st.image(output_overlay)
-                left_joint_str = ""
-                right_joint_str = ""
-                for i in range(len(left_joints)):
-                  left_joint_str += f"{left_joints[i]}: {round(left_angles[i], 2)}" + '\n'
-                  right_joint_str += f"{right_joints[i]}: {round(right_angles[i], 2)}" + '\n'
-              
-                st.subheader("Predicted joint angles:")
-                col1x, col2x, _ = st.columns(3)
-
-                with col1x:
-                  st.text_area("Left joint angles: ", 
-                            value=left_joint_str, 
-                            height=100, max_chars=None, key=None)
-                  
-                with col2x:
-                  st.text_area("Right joint angles: ", 
-                            value=right_joint_str, 
-                            height=100, max_chars=None, key=None)
-
-      elif uploaded_files[0].name.split('.')[-1] == 'mp4':
-        for file in uploaded_files:
-          video_bytes = file.read()
-          st.video(data=file)
-          cap = cv2.VideoCapture(video_bytes)
-
-          total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-          step_size = total_frames // 20
-          frame_count = 0
-
-          if st.button("Annotate"):
-            while True:
-              ret, frame = cap.read()
-              if ret:
-                if frame_count % step_size == 0:
-                  x = process_image(frame)
-                  image = tf.image.resize_with_pad(frame, dim_size, dim_size)
-
+              if st.button("Annotate"):
+                with col2:
                   keypoints = predict(model, x)
-                  visualize_keypoints(image, keypoints)
-                frame_count += 1
-              else:
-                break
-    else:
-      pass
+                  output_overlay = visualize_keypoints(image, keypoints)
+                  left_angles, right_angles = calculate_2D_joint_angles(keypoints)
+
+                  st.image(output_overlay)
+                  left_joint_str = ""
+                  right_joint_str = ""
+                  for i in range(len(left_joints)):
+                    left_joint_str += f"{left_joints[i]}: {round(left_angles[i], 2)}" + '\n'
+                    right_joint_str += f"{right_joints[i]}: {round(right_angles[i], 2)}" + '\n'
+                
+                  st.subheader("Predicted joint angles:")
+                  col1x, col2x, _ = st.columns(3)
+
+                  with col1x:
+                    st.text_area("Left joint angles: ", 
+                              value=left_joint_str, 
+                              height=100, max_chars=None, key=None)
+                    
+                  with col2x:
+                    st.text_area("Right joint angles: ", 
+                              value=right_joint_str, 
+                              height=100, max_chars=None, key=None)
+
+        elif uploaded_files[0].name.split('.')[-1] == 'mp4':
+          with col1:
+            st.subheader("Uploaded video:")
+            for file in uploaded_files:
+              temp = tempfile.NamedTemporaryFile(delete=False)
+              temp.write(file.read())
+              st.video(data=file)
+              
+          if st.button("Annotate"):
+            with col2:
+              st.subheader("Model predictions: ")
+              col1x, col2x, col3x = st.columns(3, gap='large')
+              get_frames(temp.name)
+  
+              for idx, img in enumerate(st.session_state['annotated_img']):  
+                with st.container(): 
+                  with col1x:
+                    st.image(img, 
+                            caption=st.session_state['frame_count'][idx], 
+                            width=200, 
+                            use_column_width=False)             
+
+                  with col2x:
+                    st.text_area(f"Left joint angles for image {st.session_state['frame_count'][idx]}: ", 
+                              value=st.session_state['all_left_joint_annot'][idx], 
+                              height=200, max_chars=None, key=None)
+                    
+                  with col3x:
+                    st.text_area(f"Right joint angles for image {st.session_state['frame_count'][idx]}: ", 
+                              value=st.session_state['all_right_joint_annot'][idx], 
+                              height=200, max_chars=None, key=None)
+
+        else:
+          pass
+      except:
+        pass
