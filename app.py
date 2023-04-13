@@ -19,7 +19,6 @@ from matplotlib.collections import LineCollection
 import matplotlib.patches as patches
 
 import streamlit as st
-from streamlit_image_select import image_select
 
 @st.cache_resource()
 def load_model():
@@ -65,22 +64,30 @@ def get_frames(_video):
 
   total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
   step_size = total_frames // 20
-  frame_count = 0
 
+  frames = list()
   for i in range(0, total_frames, step_size):
     cap.set(cv2.CAP_PROP_POS_FRAMES, i)
     ret, frame = cap.read()
     if not ret:
       break
+    frames.append(frame)
+  return frames
 
-    # Process frame
+@st.cache_data(experimental_allow_widgets=True)
+def infer_skeleton_from_frames(frames: list):
+  """"""
+  frame_count = 0
+  for frame in frames:
     x = process_image(frame)
     image = tf.image.resize_with_pad(frame, dim_size, dim_size)
     keypoints = predict(model, x)
+
     annotated_img = visualize_keypoints(image, keypoints)
     get_angles(keypoints)
     st.session_state['frame_count'].append(frame_count)
     st.session_state['annotated_img'].append(annotated_img)
+    frame_count += 1
   
 # Dictionary that maps from joint names to keypoint indices.
 KEYPOINT_DICT = {
@@ -381,13 +388,13 @@ if __name__ == "__main__":
 
     uploaded_files = st.file_uploader(
           label="Choose an image or video to annotate", 
-          type=["jpg", "png", "mp4"], 
+          type=["jpg", "png", "mp4", "mov"], 
           accept_multiple_files=True)
     
     col1, col2 = st.columns(2)
     if uploaded_files is not None:
       try:
-        if uploaded_files[0].name.split('.')[-1] == 'png':
+        if uploaded_files[0].name.split('.')[-1] == ('png' or 'jpg' or 'jpeg'):
           with col1:
             for file in uploaded_files:
               image = Image.open(file)
@@ -422,13 +429,16 @@ if __name__ == "__main__":
                               value=right_joint_str, 
                               height=100, max_chars=None, key=None)
 
-        elif uploaded_files[0].name.split('.')[-1] == 'mp4':
+        elif uploaded_files[0].name.split('.')[-1] == ('mp4' or 'mov'):
           with col1:
             st.subheader("Uploaded video:")
             for file in uploaded_files:
               temp = tempfile.NamedTemporaryFile(delete=False)
               temp.write(file.read())
-              st.video(data=file)
+              if file.name.split('.')[-1] == 'mp4':
+                st.video(temp.name)
+              else:
+                pass
               
           if st.button("Annotate"):
             with col2:
