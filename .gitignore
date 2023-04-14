@@ -154,3 +154,16 @@ cython_debug/
 pose-estimation/
 .env
 *.png
+*.mov
+*.mp4
+*.avi
+*.gif
+*.jpg
+*.jpeg
+*.bmp
+*.tif
+*.tiff
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+.DS_Store
