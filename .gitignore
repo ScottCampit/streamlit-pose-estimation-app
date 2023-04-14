@@ -167,3 +167,4 @@ pose-estimation/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 .DS_Store
+data/.DS_Store
