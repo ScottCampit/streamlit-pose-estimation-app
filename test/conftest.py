@@ -3,8 +3,11 @@ conftest.py
 """
 
 import pytest
+import tensorflow as tf
 import cv2
 from PIL import Image
+
+from couro.processing import process_image, predict
 
 def get_frames(_video):
   """"""
@@ -28,11 +31,11 @@ def get_frames(_video):
 
 @pytest.fixture
 def test_mp4():
-    return get_frames('../data/_aJOs5B9T-Q.mp4')
+    return get_frames('/Users/scottcampit/Projects/pose-estimator/data/_aJOs5B9T-Q.mp4')
 
 @pytest.fixture
 def test_mov():
-    return get_frames('../data/Video Apr 02, 3 46 51 PM.mov')
+    return get_frames('/Users/scottcampit/Projects/pose-estimator/data/Video Apr 02, 3 46 51 PM.mov')
 
 @pytest.fixture
 def test_jpg():
@@ -40,5 +43,20 @@ def test_jpg():
 
 @pytest.fixture
 def test_png():
-    return Image.open("../data/_aJOs5B9T-Q/00146.png")
+    return Image.open("/Users/scottcampit/Projects/pose-estimator/data/_aJOs5B9T-Q/00146.png")
+
+@pytest.fixture
+def test_model():
+  model_path="/Users/scottcampit/Projects/pose-estimator/models/lite-model_movenet_singlepose_thunder_3.tflite"
+  interpreter = tf.lite.Interpreter(model_path=model_path)
+  interpreter.allocate_tensors()
+  return interpreter
+
+@pytest.fixture
+def test_model_prediction(test_png, test_model):
+  x = process_image(test_png)
+  keypoints = predict(test_model, x)
+  return keypoints
+   
+
 
