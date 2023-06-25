@@ -1,5 +1,7 @@
 """
+processing.py
 
+Contains functions for processing images and keypoints.
 """
 
 import sys
@@ -7,6 +9,7 @@ import os
 import io
 import subprocess
 import tempfile
+import math
 
 import tensorflow as tf
 import numpy as np
@@ -61,10 +64,10 @@ KEYPOINT_EDGE_INDS_TO_COLOR = {
     (14, 16): 'c'
 }
 
-def process_image(_image):
+def process_image(_image, dim_size:int=256):
     """Process image for prediction."""
     x = tf.expand_dims(_image, axis=0)
-    x = tf.image.resize_with_pad(x, 256, 256)
+    x = tf.image.resize_with_pad(x, dim_size, dim_size)
     x = tf.cast(x, dtype=tf.float32)
     return x
 
@@ -76,6 +79,21 @@ def predict(interpreter, x):
     interpreter.invoke()
     keypoints = interpreter.get_tensor(output_details[0]['index'])
     return keypoints
+
+def _get_best_keypoints(keypoints_with_scores, height, width, keypoint_threshold=0.11):
+  """"""
+  keypoints_all = []
+  num_instances, _, _, _ = keypoints_with_scores.shape
+  for idx in range(num_instances):
+    kpts_x = keypoints_with_scores[0, idx, :, 1]
+    kpts_y = keypoints_with_scores[0, idx, :, 0]
+    kpts_scores = keypoints_with_scores[0, idx, :, 2]
+    kpts_absolute_xy = np.stack(
+        [width * np.array(kpts_x), height * np.array(kpts_y)], axis=-1)
+    kpts_above_thresh_absolute = kpts_absolute_xy[
+        kpts_scores > keypoint_threshold, :]
+    keypoints_all.append(kpts_above_thresh_absolute)
+  return keypoints_all
 
 def _keypoints_and_edges_for_display(keypoints_with_scores,
                                      height,
@@ -132,9 +150,8 @@ def _keypoints_and_edges_for_display(keypoints_with_scores,
     edges_xy = np.zeros((0, 2, 2))
   return keypoints_xy, edges_xy, edge_colors
 
-
 def draw_prediction_on_image(
-    image, keypoints_with_scores, crop_region=None, close_figure=False,
+    image, keypoints_with_scores, left_angles, right_angles, crop_region=None, close_figure=False,
     output_image_height=None):
   """Draws the keypoint predictions on image.
 
@@ -157,6 +174,7 @@ def draw_prediction_on_image(
   height, width, channel = image.shape
   aspect_ratio = float(width) / height
   fig, ax = plt.subplots(figsize=(12 * aspect_ratio, 12))
+
   # To remove the huge white borders
   fig.tight_layout(pad=0)
   ax.margins(0)
@@ -167,11 +185,11 @@ def draw_prediction_on_image(
   im = ax.imshow(image)
   line_segments = LineCollection([], linewidths=(4), linestyle='solid')
   ax.add_collection(line_segments)
+
   # Turn off tick labels
   scat = ax.scatter([], [], s=60, color='#FF1493', zorder=3)
 
-  (keypoint_locs, keypoint_edges,
-   edge_colors) = _keypoints_and_edges_for_display(
+  (keypoint_locs, keypoint_edges, edge_colors) = _keypoints_and_edges_for_display(
        keypoints_with_scores, height, width)
 
   line_segments.set_segments(keypoint_edges)
@@ -188,8 +206,8 @@ def draw_prediction_on_image(
     rec_width = min(crop_region['x_max'], 0.99) * width - xmin
     rec_height = min(crop_region['y_max'], 0.99) * height - ymin
     rect = patches.Rectangle(
-        (xmin,ymin),rec_width,rec_height,
-        linewidth=1,edgecolor='b',facecolor='none')
+        (xmin, ymin), rec_width, rec_height,
+        linewidth=1, edgecolor='b', facecolor='none')
     ax.add_patch(rect)
 
   fig.canvas.draw()
@@ -204,12 +222,13 @@ def draw_prediction_on_image(
          interpolation=cv2.INTER_CUBIC)
   return image_from_plot
 
-def visualize_keypoints(image, keypoints):
+def visualize_keypoints(image, keypoint, left_angles, right_angles):
     """Visualizes the keypoints on the image."""
     display_image = tf.expand_dims(image, axis=0)
     display_image = tf.cast(tf.image.resize_with_pad(
         display_image, 256, 256), dtype=tf.int32)
-    output_overlay = draw_prediction_on_image(np.squeeze(display_image.numpy(), axis=0), keypoints)
+    
+    output_overlay = draw_prediction_on_image(np.squeeze(display_image.numpy(), axis=0), keypoint, left_angles, right_angles)
     return output_overlay
 
 def calculate_angle(proximal:float, medial:float, distal:float):
@@ -222,37 +241,10 @@ def calculate_angle(proximal:float, medial:float, distal:float):
       
   return angle
 
-def movenet_video_inference(mp4_path:str, num_of_frames_you_want:int=20):
-  """Inference on a video file."""
-  cap = cv2.VideoCapture(mp4_path)
-
-  total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-  step_size = total_frames // num_of_frames_you_want
-  frame_count = 0
-
-  while True:
-    ret, frame = cap.read()
-    if ret:
-      if frame_count % step_size == 0:
-        x = process_image(frame)
-        image = tf.image.resize_with_pad(frame, dim_size, dim_size)
-
-        keypoints = predict(model, x)
-        visualize_keypoints(image, keypoints)
-      frame_count += 1
-    else:
-      break
-
-    # Display the frame
-    cv2.imshow('Video', frame)
-    cv2.waitKey(1)
-  
-  cap.release()
-  cv2.destroyAllWindows()
-
-def return_2D_joint_coord(keypoints:np.ndarray):
+def return_2D_joint_coord(frame:np.ndarray, keypoints_with_scores:np.ndarray):
   """Returns the joint angles using key points from MoveNet model."""
-
+  height, width, _ = frame.shape
+  keypoints = _get_best_keypoints(keypoints_with_scores, height, width)
   keypoints = np.squeeze(keypoints)
 
   left_elbow   = [keypoints[KEYPOINT_DICT['left_elbow'], :][0],      
@@ -281,9 +273,9 @@ def return_2D_joint_coord(keypoints:np.ndarray):
   right = (right_shoulder, right_elbow, right_hip, right_knee, right_ankle)
   return left, right
 
-def calculate_2D_joint_angles(keypoints:np.ndarray):
+def calculate_2D_joint_angles(frame:np.ndarray, keypoints:np.ndarray):
   """Calculates the 2D joint angles of the pose landmarks."""
-  left, right = return_2D_joint_coord(keypoints)
+  left, right = return_2D_joint_coord(frame, keypoints)
   left_shoulder, left_elbow, left_hip, left_knee, left_ankle = left
   right_shoulder, right_elbow, right_hip, right_knee, right_ankle = right
 
@@ -298,3 +290,115 @@ def calculate_2D_joint_angles(keypoints:np.ndarray):
   left_angle = (left_angle_shoulder, left_angle_knee, left_angle_hip)
   right_angle = (right_angle_shoulder, right_angle_knee, right_angle_hip)
   return left_angle, right_angle
+
+def draw_keypoints(frame, keypoints):
+  """"""
+  joint_map = list(map(tuple, keypoints[0].astype(int)))
+  for i, point in enumerate(joint_map):
+    cv2.circle(frame, point, 1, (0, 0, 255), -2)
+  return frame
+
+def draw_edges(frame, keypoints):
+  edges = [(0, 1), (0, 2), (1, 3), (2, 4), (0, 5), (0, 6), (5, 7), (7, 9), (6, 8), (8, 10), (5, 6), (5, 11), (6, 12), (11, 12), (11, 13), (13, 15), (12, 14), (14, 16)]
+  joint_map = list(map(tuple, keypoints[0].astype(int)))
+  for connection in edges:
+    connection = list(connection)
+    sp_keypoint = joint_map[connection[0]]
+    ep_keypoint = joint_map[connection[1]]
+    start_point = (sp_keypoint[0], sp_keypoint[1])
+    end_point = (ep_keypoint[0], ep_keypoint[1])
+    frame = cv2.line(frame, start_point, end_point, (0, 255, 0), 1)
+  
+  return frame
+
+def add_angles_to_keypoints(frame, keypoints, left_angle, right_angle):
+  """Adds the angles to the keypoints."""
+  keypoints = np.squeeze(keypoints)
+
+  left_shoulder_keypoint = tuple([int(x) for x in keypoints[KEYPOINT_DICT['left_shoulder'], :][0:2]])
+  left_ankle_keypoint = tuple([int(x) for x in keypoints[KEYPOINT_DICT['left_ankle'], :][0:2]])
+  left_hip_keypoint = tuple([int(x) for x in keypoints[KEYPOINT_DICT['left_hip'], :][0:2]])
+
+  right_shoulder_keypoint = tuple([int(x) for x in keypoints[KEYPOINT_DICT['right_shoulder'], :][0:2]])
+  right_ankle_keypoint = tuple([int(x) for x in keypoints[KEYPOINT_DICT['right_ankle'], :][0:2]])
+  right_hip_keypoint = tuple([int(x) for x in keypoints[KEYPOINT_DICT['right_hip'], :][0:2]])
+
+  frame = cv2.putText(frame, 
+                      str(round(left_angle[0], 2)), 
+                      left_shoulder_keypoint, 
+                      cv2.FONT_HERSHEY_SIMPLEX, 
+                      1, 
+                      (255, 255, 255)
+                      )
+  frame = cv2.putText(frame,
+                      str(round(left_angle[1], 2)),
+                      left_ankle_keypoint,
+                      cv2.FONT_HERSHEY_SIMPLEX,
+                      1,
+                      (255, 255, 255)
+                      )
+  frame = cv2.putText(frame,
+                      str(round(left_angle[2], 2)),
+                      left_hip_keypoint,
+                      cv2.FONT_HERSHEY_SIMPLEX,
+                      1,
+                      (255, 255, 255)
+                      )
+  
+  frame = cv2.putText(frame,
+                      str(round(right_angle[0], 2)),
+                      right_shoulder_keypoint,
+                      cv2.FONT_HERSHEY_SIMPLEX,
+                      1,
+                      (255, 255, 255)
+                      )
+  frame = cv2.putText(frame,
+                      str(round(right_angle[1], 2)),
+                      right_ankle_keypoint,
+                      cv2.FONT_HERSHEY_SIMPLEX,
+                      1,
+                      (255, 255, 255)
+                      )
+  frame = cv2.putText(frame,
+                      str(round(right_angle[2], 2)),
+                      right_hip_keypoint,
+                      cv2.FONT_HERSHEY_SIMPLEX,
+                      1,
+                      (255, 255, 255)
+                      )
+
+  return frame
+
+def draw_2D_pose(frame, keypoints_with_scores, left_angle, right_angle):
+  height, width, _ = frame.shape
+  keypoints = _get_best_keypoints(keypoints_with_scores, height, width)
+  keypoints = np.squeeze(keypoints)
+
+  selected_keypoints = [
+    tuple([int(x) for x in keypoints[KEYPOINT_DICT['left_shoulder'], :][0:2]]),
+    tuple([int(x) for x in keypoints[KEYPOINT_DICT['left_ankle'], :][0:2]]),
+    tuple([int(x) for x in keypoints[KEYPOINT_DICT['left_hip'], :][0:2]]),
+    tuple([int(x) for x in keypoints[KEYPOINT_DICT['right_shoulder'], :][0:2]]),
+    tuple([int(x) for x in keypoints[KEYPOINT_DICT['right_ankle'], :][0:2]]),
+    tuple([int(x) for x in keypoints[KEYPOINT_DICT['right_hip'], :][0:2]])
+  ]
+
+  scaled_keypoints = [(int(x * height), int(y * width)) for x, y in selected_keypoints]
+  joint_angles = left_angle + right_angle
+
+  frame = frame.astype(np.uint16)
+  for idx, point in enumerate(scaled_keypoints):
+    cv2.circle(img=frame, center=point, radius=5, color=(0, 0, 255), thickness=-1)
+    cv2.putText(frame, str(round(joint_angles[idx], 2)), point, cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255))
+
+    angle_rad = math.radians(joint_angles[idx])
+    line_end = (int(point[0] + 50 * math.cos(angle_rad)), int(point[1] + 50 * math.sin(angle_rad)))
+    cv2.line(frame, point, line_end, (0, 255, 0), 2)
+  
+  cv2.imshow('frame', frame)
+  cv2.waitKey(0)
+  cv2.destroyAllWindows()
+  return frame
+  
+if __name__ == "__main__":
+  pass
