@@ -25,7 +25,7 @@ streamlit run app.py
 ```
 
 ### Production
-To visit the production variant, visit couro-ai.streamlit.app/.
+To visit the production variant, visit https://couro-ai.streamlit.app/. Note that depending on usage, you may need to cold start the server instance, which will take a hot second to spin up.
 
 ## Conclusions and Learnings
 This release was incredibly informative for developing ML applications quickly using Streamlit for the frontend with pretrained CV models for the backend. This work can be expanded by incorporating model fine-tuning with new annotated data for different use-cases.
